@@ -12,58 +12,69 @@ import numpy as np
 BATCH_SIZE = 128
 CUDA = True
 k = 2
-d_learning_rate = 1e-4
-g_learning_rate = 1e-4
+d_learning_rate = 0.0002
+g_learning_rate = 0.000002
+F_DIM = 500
+OUT_DIM = 784
 
-kwargs = {'num_workers': 1, 'pin_memory': True} if CUDA else {}
+# kwargs = {'num_workers': , 'pin_memory': True} if CUDA else {}
 train_loader = torch.utils.data.DataLoader(
     datasets.MNIST('./data', train=True, download=True,
                    transform=transforms.Compose([
                        transforms.ToTensor(),
-                       transforms.Normalize((0.1307,), (0.3081,))
+                       # transforms.Normalize((0.1307,), (0.3081,))
                    ])),
-    batch_size=BATCH_SIZE, shuffle=True, **kwargs)
+    batch_size=BATCH_SIZE, shuffle=True)
 
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('./data', train=False, transform=transforms.Compose([
-                       transforms.ToTensor(),
-                       transforms.Normalize((0.1307,), (0.3081,))
-                   ])),
-    batch_size=BATCH_SIZE, shuffle=True, **kwargs)
-
-
-def get_generator_noise_input():
-    return lambda m, w, h: torch.rand(m, w, h)
+# test_loader = torch.utils.data.DataLoader(
+#     datasets.MNIST('./data', train=False, transform=transforms.Compose([
+#                        transforms.ToTensor(),
+#                        # transforms.Normalize((0.1307,), (0.3081,))
+#                    ])),
+#     batch_size=BATCH_SIZE, shuffle=True, **kwargs)
 
 class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
-        self.lin1 = nn.Linear(784, 784)
-        self.lin2 = nn.Linear(784, 784)
-        # self.scale = nn.Parameter(torch.FloatTensor([255]))
+        self.lin1 = nn.Linear(F_DIM, 256)
+        self.lin2 = nn.Linear(256, 512)
+        self.lin3 = nn.Linear(512, 1024)
+        self.lin4 = nn.Linear(1024, OUT_DIM)
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
         x = F.relu(self.lin1(x))
-        x = F.sigmoid(self.lin2(x))
+        x = F.relu(self.lin2(x))
+        x = F.relu(self.lin3(x))
+        x = F.sigmoid(self.lin4(x))
         return x.view(-1, 1, 28, 28)
 
 
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
-        self.conv1 = nn.Conv2d(1, 5, kernel_size=3, padding=1)
-        self.conv2 = nn.Conv2d(5, 5, kernel_size=3, padding=1)
-        self.fn = nn.Linear(28 * 28 * 5, 1)
+        # self.conv1 = nn.Conv2d(1, 5, kernel_size=3, padding=1)
+        # self.conv2 = nn.Conv2d(5, 5, kernel_size=3, padding=1)
+        self.lin1 = nn.Linear(784, 1024)
+        self.lin2 = nn.Linear(1024, 512)
+        self.lin3 = nn.Linear(512, 256)
+        self.lin4 = nn.Linear(256, 1)
+        # self.fn = nn.Linear(28 * 28 * 5, 1)
 
     def forward(self, x):
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-        x = self.fn(x.view(x.size(0), -1))
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, 0.3)
+        x = F.relu(self.lin2(x))
+        x = F.dropout(x, 0.3)
+        x = F.relu(self.lin3(x))
+        x = F.dropout(x, 0.3)
+        x = self.lin4(x)
+        # x = F.relu(self.conv1(x))
+        # x = F.relu(self.conv2(x))
         return F.sigmoid(x)
 
 
-g_sampler = get_generator_noise_input()
 G = Generator()
 D = Discriminator()
 
@@ -72,12 +83,12 @@ if CUDA:
     D.cuda()
 
 BCELoss = nn.BCELoss()
-d_optimizer = optim.SGD(D.parameters(), lr=d_learning_rate, momentum=0.9)
-g_optimizer = optim.SGD(G.parameters(), lr=g_learning_rate, momentum=0.9)
+d_optimizer = optim.Adam(D.parameters(), lr=d_learning_rate)
+g_optimizer = optim.Adam(G.parameters(), lr=g_learning_rate)
 
 def generative_loss(f_data):
     dg_ = D(G(f_data))
-    y_ = torch.zeros(f_data.size()[0], 1)
+    y_ = torch.ones(f_data.size()[0], 1)
     if CUDA:
         y_ = y_.cuda()
     g_loss = BCELoss(dg_, Variable(y_))
@@ -95,10 +106,9 @@ def discriminative_loss(r_data, f_data):
 
 
 def train_discriminative(data):
-    D.train()
     G.eval()
     r_data = Variable(data)
-    z = torch.rand(data.size(0), 1, data.size(2), data.size(3))
+    z = torch.rand(data.size(0), 1, F_DIM)
     if CUDA:
         z = z.cuda()
     f_data = Variable(z)
@@ -110,9 +120,8 @@ def train_discriminative(data):
 
 
 def train_generative(data):
-    G.train()
     D.eval()
-    z = torch.rand(data.size(0), 1, data.size(2), data.size(3))
+    z = torch.rand(data.size(0), 1, F_DIM)
     if CUDA:
         z = z.cuda()
     f_data = Variable(z)
@@ -125,7 +134,7 @@ def train_generative(data):
 
 def get_image():
     G.eval()
-    z = torch.rand(1, 1, 28, 28)
+    z = torch.rand(1, 1, F_DIM)
     if CUDA:
         z = z.cuda()
     f_data = Variable(z)
@@ -172,7 +181,7 @@ def main(steps):
         print "Epoch {0}, d_loss {1}, g_loss {2}".format(step, d_loss[-1], g_loss[-1])
         img = get_image()
         plot_image(img, step)
-        plot_loss(np.array(d_loss)[::k], np.array(g_loss), step)
+        plot_loss(np.array(d_loss), np.array(g_loss), step)
 
 
 torch.manual_seed(1)
@@ -181,4 +190,4 @@ if CUDA:
 
 
 if __name__ == "__main__":
-    main(30)
+    main(100)
