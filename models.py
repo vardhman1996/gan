@@ -17,21 +17,12 @@ g_learning_rate = 0.000002
 F_DIM = 500
 OUT_DIM = 784
 
-# kwargs = {'num_workers': , 'pin_memory': True} if CUDA else {}
 train_loader = torch.utils.data.DataLoader(
     datasets.MNIST('./data', train=True, download=True,
                    transform=transforms.Compose([
-                       transforms.ToTensor(),
-                       # transforms.Normalize((0.1307,), (0.3081,))
+                       transforms.ToTensor()
                    ])),
     batch_size=BATCH_SIZE, shuffle=True)
-
-# test_loader = torch.utils.data.DataLoader(
-#     datasets.MNIST('./data', train=False, transform=transforms.Compose([
-#                        transforms.ToTensor(),
-#                        # transforms.Normalize((0.1307,), (0.3081,))
-#                    ])),
-#     batch_size=BATCH_SIZE, shuffle=True, **kwargs)
 
 class Generator(nn.Module):
     def __init__(self):
@@ -40,39 +31,37 @@ class Generator(nn.Module):
         self.lin2 = nn.Linear(256, 512)
         self.lin3 = nn.Linear(512, 1024)
         self.lin4 = nn.Linear(1024, OUT_DIM)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
         x = F.relu(self.lin1(x))
+        # x = F.dropout(x, 0.3)
         x = F.relu(self.lin2(x))
+        # x = F.dropout(x, 0.3)
         x = F.relu(self.lin3(x))
-        x = F.sigmoid(self.lin4(x))
+        # x = F.dropout(x, 0.3)
+        x = self.sigmoid(self.lin4(x))
         return x.view(-1, 1, 28, 28)
 
 
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
-        # self.conv1 = nn.Conv2d(1, 5, kernel_size=3, padding=1)
-        # self.conv2 = nn.Conv2d(5, 5, kernel_size=3, padding=1)
         self.lin1 = nn.Linear(784, 1024)
         self.lin2 = nn.Linear(1024, 512)
         self.lin3 = nn.Linear(512, 256)
         self.lin4 = nn.Linear(256, 1)
-        # self.fn = nn.Linear(28 * 28 * 5, 1)
+        self.sigmoid = nn.Sigmoid()
+
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
         x = F.relu(self.lin1(x))
-        x = F.dropout(x, 0.3)
         x = F.relu(self.lin2(x))
-        x = F.dropout(x, 0.3)
         x = F.relu(self.lin3(x))
-        x = F.dropout(x, 0.3)
         x = self.lin4(x)
-        # x = F.relu(self.conv1(x))
-        # x = F.relu(self.conv2(x))
-        return F.sigmoid(x)
+        return self.sigmoid(x)
 
 
 G = Generator()
@@ -106,13 +95,14 @@ def discriminative_loss(r_data, f_data):
 
 
 def train_discriminative(data):
+    D.train()
     G.eval()
+    d_optimizer.zero_grad()
     r_data = Variable(data)
     z = torch.rand(data.size(0), 1, F_DIM)
     if CUDA:
         z = z.cuda()
     f_data = Variable(z)
-    d_optimizer.zero_grad()
     d_loss = discriminative_loss(r_data, f_data)
     d_loss.backward()
     d_optimizer.step()
@@ -121,11 +111,12 @@ def train_discriminative(data):
 
 def train_generative(data):
     D.eval()
+    G.train()
+    g_optimizer.zero_grad()
     z = torch.rand(data.size(0), 1, F_DIM)
     if CUDA:
         z = z.cuda()
     f_data = Variable(z)
-    g_optimizer.zero_grad()
     g_loss = generative_loss(f_data)
     g_loss.backward()
     g_optimizer.step()
@@ -172,10 +163,8 @@ def main(steps):
             if CUDA:
                 data = data.cuda()
             dl = train_discriminative(data)
-            # d_loss.append(dl)
             if (batch_num + 1) % k == 0:
                 gl = train_generative(data)
-                # g_loss.append(gl)
         d_loss.append(dl)
         g_loss.append(gl)
         print "Epoch {0}, d_loss {1}, g_loss {2}".format(step, d_loss[-1], g_loss[-1])
